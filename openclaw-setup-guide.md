@@ -1,310 +1,148 @@
-# OpenClaw Setup Guide — Secure & Scalable
+# OpenClaw Setup Guide
 
-OpenClaw is a self-hosted, local-first personal AI assistant that connects to 20+ messaging platforms (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, and more). This guide covers installation, security hardening, and scalable deployment.
+OpenClaw is a self-hosted AI assistant that connects to your messaging apps (WhatsApp, Telegram, Slack, Discord, Signal, and 15+ more). You run it yourself — your data stays on your machine.
 
 ---
 
-## Prerequisites
+## Should you use a separate device?
 
-| Requirement | Minimum | Recommended |
+**Yes, if you can.** Here's why in plain terms:
+
+- OpenClaw runs a background service all day and night. On your main laptop, this drains battery and uses up memory while you're working.
+- If something breaks, it won't affect your primary machine.
+- A dedicated device (old laptop, Raspberry Pi 4, cheap cloud VPS) stays always-on so your assistant is always reachable.
+
+**If you only have one laptop** — it still works fine there. Just expect some extra RAM usage in the background.
+
+**Best device options (cheapest to easiest):**
+
+| Device | Cost | Notes |
 |---|---|---|
-| Node.js | 22.14+ (LTS) | 24.x |
-| OS | macOS, Linux, Windows (WSL2) | Linux (Ubuntu 22.04+) |
-| AI Provider Key | Anthropic, OpenAI, or Google | Anthropic (Claude) |
-| RAM | 512 MB | 1 GB+ |
+| Spare/old laptop | $0 | Best if you have one sitting around |
+| Raspberry Pi 4 | ~$60 one-time | Tiny, quiet, always-on |
+| Cloud VPS (Hetzner, DigitalOcean) | ~$5–6/month | No hardware to manage |
 
 ---
 
-## 1. Installation
+## Step-by-Step Setup
 
-### Option A — Installer Script (Recommended for first-time setup)
+### Step 1 — Check Node.js
 
-The installer auto-detects your OS and Node version:
+OpenClaw needs Node.js version 22 or newer. Check what you have:
 
 ```bash
-curl -fsSL https://openclaw.ai/install.sh | bash
+node --version
 ```
 
-> Always inspect installer scripts before piping to bash:
-> `curl -fsSL https://openclaw.ai/install.sh | less`
+If it shows `v22.x` or higher, you're good. If not, install it from [nodejs.org](https://nodejs.org).
 
-### Option B — npm / pnpm
+---
+
+### Step 2 — Install OpenClaw
 
 ```bash
 npm install -g openclaw@latest
-# or
-pnpm add -g openclaw@latest
 ```
 
-### Option C — Build from Source
-
-```bash
-git clone https://github.com/openclaw/openclaw.git
-cd openclaw
-pnpm install && pnpm build
-```
-
----
-
-## 2. Onboarding
-
-Run the interactive onboarding wizard. It configures the Gateway, model auth, workspace, and channels in one session:
+Then run the setup wizard — it walks you through everything step by step:
 
 ```bash
 openclaw onboard --install-daemon
 ```
 
-This registers the background daemon that keeps the Gateway running persistently. Budget **15–30 minutes** depending on whether you need to set up API keys first.
+This will ask you for:
+- Your AI provider API key (e.g. Anthropic)
+- Which messaging platforms to connect
+- Whether to start on boot
+
+Budget **15–30 minutes** for your first run.
 
 ---
 
-## 3. Minimal Configuration
+### Step 3 — Store your API key safely
 
-At minimum, specify your AI model in your OpenClaw config:
-
-```json
-{
-  "agent": {
-    "model": "anthropic/claude-sonnet-4-20250514"
-  }
-}
-```
-
-### API Keys — Never Hardcode
-
-Store API keys in environment variables:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENCLAW_API_KEY="..."
-```
-
-Or use a `.env` file (never commit it):
+Never type your API key directly into a config file or share it in chat. Instead, create a `.env` file:
 
 ```
 # .env
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
 
-Add `.env` to `.gitignore`:
+Then make sure it's never accidentally uploaded to GitHub:
 
-```
+```bash
 echo ".env" >> .gitignore
 ```
 
 ---
 
-## 4. Security Hardening
+### Step 4 — Access it remotely (without opening ports)
 
-### 4.1 DM Pairing (Built-in Trust Model)
+If OpenClaw runs on a separate device, you need a safe way to reach it from your main laptop or phone.
 
-By default, OpenClaw treats **inbound DMs as untrusted input**. Unknown senders receive a code they must return to you for approval before their messages are processed. This is enabled by default — do not disable it.
-
-### 4.2 Sandbox Non-Main Sessions
-
-For team or multi-user deployments, sandbox each non-main session in its own Docker container:
+**Use Tailscale** — it's free, takes 5 minutes to set up, and creates a private encrypted tunnel between your devices. No open firewall ports needed.
 
 ```bash
-docker run --rm -it \
-  --name openclaw-session-user1 \
-  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  --network=internal \
-  openclaw/openclaw:latest
-```
-
-This limits blast radius if any session is compromised.
-
-### 4.3 Restrict Agent Tool Access
-
-In your config, explicitly allowlist only the tools each agent session needs:
-
-```json
-{
-  "agent": {
-    "model": "anthropic/claude-sonnet-4-20250514",
-    "tools": ["read_file", "web_search"]
-  }
-}
-```
-
-Do not grant file-write or shell-exec tools unless strictly required.
-
-### 4.4 Never Expose the Gateway Port Publicly
-
-The Gateway runs locally at `ws://127.0.0.1:18789` by default. **Do not bind this to 0.0.0.0 or expose it to the internet directly.** Use Tailscale (see Section 5) for remote access.
-
-### 4.5 Run Under a Dedicated Low-Privilege User
-
-```bash
-# Create a dedicated user
-sudo useradd -m -s /bin/bash openclaw
-
-# Run OpenClaw as that user
-sudo -u openclaw openclaw onboard --install-daemon
-```
-
-### 4.6 Keep OpenClaw Updated
-
-```bash
-npm install -g openclaw@latest
-```
-
-Subscribe to the **stable** channel unless you need new features:
-
-```bash
-openclaw channel stable
-```
-
----
-
-## 5. Scalable Remote Deployment
-
-### 5.1 Run the Gateway on a Remote Linux Instance
-
-For always-on availability, run OpenClaw on a VPS (e.g., DigitalOcean, AWS Lightsail, Hetzner):
-
-```bash
-# On the remote server
-npm install -g openclaw@latest
-openclaw onboard --install-daemon
-```
-
-### 5.2 Secure Remote Access via Tailscale
-
-Use [Tailscale](https://tailscale.com) to create a private mesh network — no open ports needed:
-
-```bash
-# Install Tailscale on server
+# Install Tailscale on the OpenClaw device
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 
-# Expose OpenClaw gateway over Tailscale
+# Tell OpenClaw to serve over Tailscale
 openclaw serve --tailscale
 ```
 
-For public-facing webhooks (e.g., WhatsApp callbacks), use **Tailscale Funnel**:
+Now you can reach OpenClaw from any of your devices on your Tailscale network.
 
-```bash
-tailscale funnel 18789
-```
+---
 
-This gives you an HTTPS endpoint backed by Tailscale — no nginx or Let's Encrypt config needed.
-
-### 5.3 Docker Compose (Multi-Session Deployment)
-
-```yaml
-# docker-compose.yml
-version: '3.9'
-services:
-  openclaw-gateway:
-    image: openclaw/openclaw:latest
-    restart: unless-stopped
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    volumes:
-      - ./config:/home/openclaw/.openclaw
-    networks:
-      - openclaw-net
-    ports:
-      - "127.0.0.1:18789:18789"   # Bind to localhost only
-
-  openclaw-session-a:
-    image: openclaw/openclaw:latest
-    restart: unless-stopped
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    networks:
-      - openclaw-net
-
-networks:
-  openclaw-net:
-    driver: bridge
-    internal: true   # No direct internet access for containers
-```
-
-Start with:
-
-```bash
-docker compose up -d
-```
-
-### 5.4 Health Monitoring
-
-OpenClaw ships with a built-in diagnostics tool:
+### Step 5 — Check everything is working
 
 ```bash
 openclaw doctor
 ```
 
-This checks daemon health, config validity, channel connectivity, and API key status. Integrate it into your monitoring pipeline or a cron job:
-
-```bash
-# crontab -e
-*/15 * * * * openclaw doctor --json >> /var/log/openclaw-health.log 2>&1
-```
+This is the built-in health check. Run it any time something feels off — it tells you exactly what's misconfigured.
 
 ---
 
-## 6. Architecture Overview
+## Security — The Simple Rules
 
-```
-                    ┌─────────────────────────────┐
-                    │         OpenClaw            │
-                    │                             │
-  Channels ──────▶  │  Gateway (WebSocket)        │
-  (WhatsApp,        │  ws://127.0.0.1:18789       │
-   Telegram,        │           │                 │
-   Slack, etc.)     │  Pi Agent Runtime (RPC)     │
-                    │           │                 │
-                    │  AI Model (Anthropic, etc.) │
-                    └─────────────────────────────┘
-                                │
-              ┌─────────────────┴──────────────────┐
-              │                                    │
-       Tailscale / SSH                       Docker Sandbox
-       (Remote access)                      (Per-session isolation)
-```
+You don't need to be a security expert. Just follow these:
 
-**Gateway** — Central control plane. Manages sessions, channel routing, tool calls, and event dispatch.
-
-**Pi Agent Runtime** — The RPC layer that executes tool calls and communicates with the AI provider.
-
-**Multi-channel inbox** — Normalises inbound messages from 20+ platforms into a single queue.
+1. **Don't share your API key** — keep it in `.env`, not in your config or code
+2. **Leave DM pairing ON** (it's on by default) — strangers can't just message your assistant; they have to be approved first
+3. **Don't expose port 18789 to the internet** — use Tailscale instead
+4. **Keep it updated** — run `npm install -g openclaw@latest` every few weeks
+5. **Run `openclaw doctor` regularly** — catches problems before they become issues
 
 ---
 
-## 7. Quick Reference
+## Quick Reference
 
-| Task | Command |
+| What you want to do | Command |
 |---|---|
 | Install | `npm install -g openclaw@latest` |
-| Onboard + start daemon | `openclaw onboard --install-daemon` |
+| First-time setup | `openclaw onboard --install-daemon` |
 | Check health | `openclaw doctor` |
-| Switch to stable channel | `openclaw channel stable` |
 | Update | `npm install -g openclaw@latest` |
-| Serve via Tailscale | `openclaw serve --tailscale` |
+| Remote access via Tailscale | `openclaw serve --tailscale` |
 
 ---
 
-## 8. Security Checklist
+## Security Checklist
 
-- [ ] API keys stored in env vars or `.env`, never hardcoded or committed
-- [ ] `.env` in `.gitignore`
-- [ ] DM pairing enabled (default — do not disable)
-- [ ] Gateway port bound to `127.0.0.1` only, not `0.0.0.0`
-- [ ] Remote access via Tailscale, not open ports
-- [ ] Non-main sessions sandboxed in Docker containers
-- [ ] Agent tool access explicitly allowlisted
-- [ ] Running under a dedicated low-privilege OS user
-- [ ] Auto-updates enabled or regular manual updates scheduled
-- [ ] `openclaw doctor` integrated into monitoring
+- [ ] API keys in `.env`, not hardcoded anywhere
+- [ ] `.env` added to `.gitignore`
+- [ ] DM pairing left ON (default)
+- [ ] Not exposing port 18789 publicly
+- [ ] Using Tailscale for remote access
+- [ ] Running on a separate/dedicated device if possible
+- [ ] `openclaw doctor` run and all checks passing
 
 ---
 
 ## Sources
 
-- [OpenClaw Official Docs — Install](https://docs.openclaw.ai/install)
-- [OpenClaw GitHub Repository](https://github.com/openclaw/openclaw)
-- [How to Run OpenClaw with DigitalOcean](https://www.digitalocean.com/community/tutorials/how-to-run-openclaw)
-- [OpenClaw Setup Tutorial 2026](https://www.shareuhack.com/en/posts/openclaw-setup-tutorial-2026)
-- [OpenClaw Setup Guide — Verdent](https://www.verdent.ai/guides/openclaw-setup-guide-from-zero-to-ai-assistant)
+- [OpenClaw Official Docs](https://docs.openclaw.ai/install)
+- [OpenClaw GitHub](https://github.com/openclaw/openclaw)
+- [Tailscale](https://tailscale.com)
